@@ -24,5 +24,6 @@
         "report/commission_analysis_view.xml",
         "wizards/wizard_invoice.xml",
     ],
+    "post_init_hook": "post_init_hook",
     "installable": True,
 }

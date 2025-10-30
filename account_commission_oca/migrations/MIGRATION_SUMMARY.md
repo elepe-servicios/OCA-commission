@@ -21,7 +21,9 @@ The module was renamed to follow OCA naming conventions where all OCA modules sh
 This script is executed **before** the new module code is loaded. It performs:
 
 1. **Module Rename**: Uses `util.rename_module()` to rename the module from `account_commission` to `account_commission_oca`
-2. **Automatic Reference Updates**: The utility function automatically updates:
+2. **Security Group Protection**: Sets `noupdate=True` on `group_invoicing_commission` to preserve customizations
+3. **Cleanup**: Removes duplicate module entries and orphaned XML IDs from the old module
+4. **Automatic Reference Updates**: The utility function automatically updates:
    - Module name in `ir_module_module`
    - All XML IDs (external identifiers)
    - Model references in `ir_model`
@@ -38,6 +40,16 @@ This script is executed **before** the new module code is loaded. It performs:
 ### post-migration.py
 
 This script is executed **after** the new module code has been loaded. Currently, no post-migration actions are needed because `util.rename_module()` handles all necessary updates automatically.
+
+### post_init_hook
+
+This hook is executed after the module is installed or updated. It performs:
+
+1. **Old Module Detection**: Checks if `account_commission` still exists in the system
+2. **Complete Removal**: Uses `util.remove_module()` to completely eliminate the old module
+3. **Error Handling**: Logs any issues during removal for manual cleanup if needed
+
+This ensures that only `account_commission_oca` remains in the system after migration.
 
 ## What Gets Migrated
 

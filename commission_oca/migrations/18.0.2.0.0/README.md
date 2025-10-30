@@ -4,6 +4,20 @@
 
 This migration handles the module rename from `commission` (v17.0) to `commission_oca` (v18.0).
 
+## Components
+
+### Migration Scripts (run once during upgrade)
+
+Migration scripts execute automatically during version upgrades in the following order:
+
+1. **pre-migration.py** - Before module load
+2. **post-migration.py** - After module load
+3. **end-cleanup.py** - After all modules loaded
+
+### Post-Installation Hook (runs every install/update)
+
+The module includes a `post_init_hook` (in `hooks.py`) that runs **every time** the module is installed or updated, providing an additional safety layer to ensure the old module is completely removed.
+
 ## What does this migration do?
 
 ### Pre-migration (pre-migration.py)
@@ -16,15 +30,39 @@ Executed **before** the module is loaded:
    - All XML IDs from `commission.*` to `commission_oca.*`
    - Module dependencies in other modules
    - All references throughout the database
+3. **Cleans residual entries** that may remain after rename
 
 ### Post-migration (post-migration.py)
 
 Executed **after** the module and its dependencies are loaded:
 
-1. **Verifies** the module exists with the new name
-2. **Updates** module category names if needed
-3. **Validates** all models are properly registered
-4. **Checks** menu items and security groups
+1. **Removes old module entries** from `ir_module_module`
+2. **Cleans duplicate XML IDs** (keeps commission_oca version, removes commission version)
+3. **Migrates orphan XML IDs** without duplicates to commission_oca
+4. **Provides detailed logging** of all operations
+
+### End-cleanup (end-cleanup.py)
+
+Executed **after all modules** have been loaded and migrated:
+
+1. **Final verification** that old module is completely removed
+2. **Removes any remaining dependencies** on the old module
+3. **Cleans remaining XML ID duplicates**
+4. **Provides comprehensive status report** with ✓/✗ indicators
+
+### Post-Installation Hook (hooks.py)
+
+Executed **every time** the module is installed or updated:
+
+1. **Checks** if old `commission` module still exists
+2. **Removes it completely** using `util.remove_module()`
+3. **Cleans any remaining XML IDs** from the old module
+4. **Provides detailed logging** for debugging
+
+This hook provides a safety net that ensures cleanup even if:
+- Migration scripts didn't run
+- Database was restored from backup
+- Module was manually installed instead of upgraded
 
 ## Technical Details
 
@@ -72,25 +110,39 @@ Modules depending on `commission` will have their dependencies automatically upd
 
 ## Execution on Odoo.sh
 
+### Migration Scripts
+
 These scripts will execute automatically when:
 
 1. The database is upgraded to Odoo 18.0
 2. The `commission_oca` module is being updated
-3. The version in the migration folder (18.0.1.0.0) is higher than the installed version
+3. The version in the migration folder (18.0.2.0.0) is higher than the installed version
 
-### Execution Order
+#### Execution Order
 
 1. **Pre-migration phase**: Runs BEFORE module code is loaded
 2. **Module loading**: Odoo loads the new module code
 3. **Post-migration phase**: Runs AFTER module is loaded
+4. **End-migration phase**: Runs AFTER all modules are loaded
+
+### Post-Installation Hook
+
+The hook executes automatically **every time**:
+
+1. The module is installed for the first time
+2. The module is updated to a new version
+3. An Odoo.sh upgrade is performed
+
+This provides an additional safety layer beyond the one-time migration scripts.
 
 ## Important Notes
 
 ### For Odoo.sh Users
 
-✅ **Safe to use**: These scripts are designed for automatic execution on Odoo.sh
-✅ **Idempotent**: Can be run multiple times safely
-✅ **Rollback safe**: Uses transactions and checks before modifications
+✅ **Safe to use**: Migration scripts and hook are designed for automatic execution on Odoo.sh  
+✅ **Idempotent**: Can be run multiple times safely  
+✅ **Rollback safe**: Uses transactions and checks before modifications  
+✅ **Multiple safety layers**: Migration scripts + post-installation hook ensure complete cleanup
 
 ### For Module Developers
 
@@ -99,6 +151,19 @@ If you have custom modules depending on `commission`:
 1. **Dependencies are auto-updated**: The migration automatically updates module dependencies
 2. **XML IDs in code**: If you reference XML IDs in Python code, they remain unchanged (e.g., `self.env.ref('commission_oca.some_xmlid')` works the same)
 3. **Inherits**: Model inheritance statements don't need changes as model names remain the same
+
+### How the Safety Layers Work
+
+1. **Migration scripts** (run once during upgrade):
+   - pre-migration.py: Renames module and cleans residuals
+   - post-migration.py: Removes duplicates and orphans
+   - end-cleanup.py: Final verification and cleanup
+
+2. **Post-installation hook** (runs every install/update):
+   - Checks if old module exists
+   - Removes it completely if found
+   - Cleans any remaining XML IDs
+   - Provides safety net for edge cases
 
 ### Migration Path
 
