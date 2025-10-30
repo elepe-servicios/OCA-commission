@@ -3,7 +3,7 @@ from . import wizards
 from . import report
 
 
-def post_init_hook(env):
+def post_init_hook(cr, registry):
     """Remove old account_commission module if it exists.
     
     This hook is executed after the module is installed or updated.
@@ -14,7 +14,6 @@ def post_init_hook(env):
     import logging
     
     _logger = logging.getLogger(__name__)
-    cr = env.cr
     
     # Check if the old module still exists
     if util.module_installed(cr, "account_commission"):
