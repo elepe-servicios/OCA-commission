@@ -6,7 +6,7 @@ import logging
 _logger = logging.getLogger(__name__)
 
 
-def post_init_hook(cr, registry):
+def post_init_hook(env):
     """Hook executed after module installation/update.
 
     This hook ensures that the old 'commission' module is completely removed
@@ -20,6 +20,8 @@ def post_init_hook(cr, registry):
     """
     from odoo.upgrade import util
 
+    cr = env.cr
+    
     _logger.info("=" * 70)
     _logger.info("POST-INIT HOOK: Checking for old 'commission' module")
     _logger.info("=" * 70)
