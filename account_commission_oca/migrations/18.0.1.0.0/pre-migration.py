@@ -31,6 +31,14 @@ def migrate(cr, version):
         )
         return
     
+    # Set noupdate=True for security group to prevent updates during migration
+    _logger.info("Setting noupdate flag for group_invoicing_commission")
+    util.force_noupdate(
+        cr, 
+        "account_commission.group_invoicing_commission",
+        noupdate=True
+    )
+    
     _logger.info("Renaming module 'account_commission' to 'account_commission_oca'")
     
     # Rename the module - this will update all references automatically
