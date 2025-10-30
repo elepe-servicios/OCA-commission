@@ -20,6 +20,7 @@ def migrate(cr, version):
     - Update XML IDs
     - Update model references
     - Update security groups
+    - Remove old module entry to avoid duplicates
     """
     _logger.info("Starting migration from account_commission to account_commission_oca")
     
@@ -44,7 +45,28 @@ def migrate(cr, version):
     # Rename the module - this will update all references automatically
     util.rename_module(cr, "account_commission", "account_commission_oca")
     
+    # Remove any remaining references to the old module name
+    _logger.info("Cleaning up old module references")
+    cr.execute(
+        """
+        DELETE FROM ir_module_module
+        WHERE name = 'account_commission'
+        AND id != (SELECT id FROM ir_module_module WHERE name = 'account_commission_oca')
+        """
+    )
+    
+    # Clean up any orphaned ir_model_data entries for the old module
+    cr.execute(
+        """
+        DELETE FROM ir_model_data
+        WHERE module = 'account_commission'
+        AND name NOT IN (
+            SELECT name FROM ir_model_data WHERE module = 'account_commission_oca'
+        )
+        """
+    )
+    
     _logger.info(
         "Successfully renamed module from 'account_commission' to "
-        "'account_commission_oca'"
+        "'account_commission_oca' and cleaned up old references"
     )
