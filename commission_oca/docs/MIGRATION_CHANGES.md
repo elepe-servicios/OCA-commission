@@ -26,23 +26,67 @@ se ejecutaban**.
 
 ## Solución implementada
 
-Se crearon `pre_init_hook` en cada módulo. Los hooks se ejecutan **siempre** (tanto en
-instalación como en upgrade) y son el punto de entrada correcto para migraciones
-cross-version.
+Se implementó una **estrategia de dos piezas**:
+
+1. **Módulo puente `sale_commission/`**: Un módulo "bridge" con el nombre viejo que Odoo
+   V19 puede encontrar en el addons path. Cuando se ejecuta `-u all`, Odoo ve que
+   `sale_commission` está instalado en la BD (V14) y existe en el addons path (bridge,
+   versión 19.0.14.99.0), así que lo marca para upgrade. Sus dependencias (`commission_oca`,
+   `account_commission_oca`, `sale_commission_oca`) causan la **instalación** de los tres
+   módulos V19.
+
+2. **`pre_init_hook` en cada módulo V19**: Los hooks se ejecutan ANTES de que el ORM cargue
+   las tablas, renombrando tablas, modelos y campos para que el ORM encuentre los datos
+   existentes.
+
+### Flujo de `-u all` (V14 → V19)
+
+```
+1. Odoo detecta sale_commission instalado (V14) → bridge en addons → marca to upgrade
+2. Resuelve dependencias: commission_oca, account_commission_oca, sale_commission_oca
+3. commission_oca se INSTALA:
+   ├── pre_init_hook detecta sale_commission + tabla sale_commission existe → V14!
+   ├── Renombra tablas: sale_commission → commission, etc.
+   ├── Renombra modelos en metadatos
+   ├── Renombra campo agent_ids → commission_agent_ids
+   ├── Limpia XML IDs técnicos, mueve datos a commission_oca
+   └── NO marca sale_commission como uninstalled (bridge aún procesando)
+4. account_commission_oca se INSTALA:
+   └── pre_init_hook → no detecta account_commission en V14 → no-op
+5. sale_commission_oca se INSTALA:
+   ├── pre_init_hook detecta sale_commission en 'to upgrade' (bridge)
+   └── Solo mueve XML IDs residuales, no marca como uninstalled
+6. sale_commission (bridge) se ACTUALIZA:
+   └── post-migrate.py → limpieza final de XML IDs huérfanos
+```
 
 ---
 
 ## Cambios por módulo
 
+### 0. `sale_commission` (módulo puente/bridge)
+
+#### Archivos nuevos
+- **`__manifest__.py`** — Versión `19.0.14.99.0`, depende de los 3 módulos V19
+- **`__init__.py`** — Vacío (no tiene código Python)
+- **`migrations/19.0.14.99.0/post-migrate.py`** — Limpieza final de XML IDs huérfanos
+
+> **IMPORTANTE:** Este módulo existe SOLO para la migración. Después de migrar,
+> puede desinstalarse. Si se usa Odoo Enterprise (que tiene su propio `sale_commission`),
+> eliminar el directorio `sale_commission/` del addons path.
+
+---
+
 ### 1. `commission_oca`
 
 #### Archivos nuevos
 - **`hooks.py`** — `pre_init_hook` principal que maneja:
-  - **Migración V14:** Detecta `sale_commission` instalado y ejecuta:
+  - **Migración V14:** Detecta `sale_commission` instalado **Y** tabla `sale_commission` existe:
     - Renombrado de 6 modelos concretos (con tabla) y 4 abstractos/transitorios
     - Renombrado de tablas correspondientes
     - Renombrado de campo `res.partner.agent_ids` → `commission_agent_ids`
-    - Limpieza del módulo viejo `sale_commission` en `ir_module_module`
+    - Limpia XML IDs técnicos, mueve datos a `commission_oca`
+    - **NO** marca `sale_commission` como uninstalled (el bridge lo maneja)
   - **Migración V16-V18:** Detecta `commission` instalado y mueve XML IDs a `commission_oca`
   - Usa `odoo-upgrade-util` cuando está disponible, con fallback a SQL directo
 
@@ -137,29 +181,40 @@ ejecutaban.
 ## Orden de ejecución en la migración
 
 ```
-1. commission_oca pre_init_hook
-   ├── Detecta sale_commission (V14) → renombra modelos, tablas, campos
-   └── Detecta commission (V16-V18) → mueve XML IDs
-2. commission_oca se instala (ORM crea/verifica tablas)
-3. account_commission_oca pre_init_hook
-   └── Detecta account_commission (V16-V18) → mueve XML IDs
-4. account_commission_oca se instala
-5. sale_commission_oca pre_init_hook
-   └── Detecta sale_commission (V16-V18) → mueve XML IDs, verifica Enterprise
-6. sale_commission_oca se instala
+1. Odoo detecta sale_commission (instalado V14) + bridge (addons V19) → to upgrade
+2. Resuelve deps del bridge → commission_oca, account_commission_oca, sale_commission_oca
+3. commission_oca pre_init_hook
+   ├── Detecta sale_commission + tabla sale_commission → V14 migration!
+   ├── Renombra modelos, tablas, campos
+   ├── Limpia XML IDs técnicos, mueve datos
+   └── NO marca sale_commission como uninstalled
+4. commission_oca se instala (ORM encuentra tablas renombradas)
+5. account_commission_oca pre_init_hook
+   └── Detecta account_commission (V16-V18) → mueve XML IDs (no-op en V14)
+6. account_commission_oca se instala
+7. sale_commission_oca pre_init_hook
+   └── Detecta sale_commission en 'to upgrade' → solo mueve XML IDs residuales
+8. sale_commission_oca se instala
+9. sale_commission (bridge) post-migrate.py
+   └── Limpieza final de XML IDs huérfanos
 ```
 
-## Comando de instalación recomendado
+## Comando de migración recomendado
 
 ```bash
-# Con upgrade-util (recomendado para migración robusta)
+# Asegurar que el directorio sale_commission/ (bridge) está en el addons path
+# junto con commission_oca/, account_commission_oca/, sale_commission_oca/
+
+# (Opcional) Instalar upgrade-util para migración más robusta
 pip install odoo_upgrade@git+https://github.com/odoo/upgrade-util@master
 
-# Instalar los módulos
-odoo-bin -d DATABASE \
-  -i commission_oca,account_commission_oca,sale_commission_oca \
-  --upgrade-path=/path/to/upgrade-util/src \
-  --stop-after-init
+# Ejecutar update all — el bridge se encarga de todo
+odoo-bin -d DATABASE -u all --stop-after-init
+
+# Si se usa Odoo Enterprise, después de migrar:
+# 1. Desinstalar el bridge: sale_commission
+# 2. Eliminar sale_commission/ del addons path
+# 3. El módulo Enterprise sale_commission ya puede usarse
 ```
 
 ## Referencias

@@ -4,18 +4,17 @@
 """
 Migration hooks for sale_commission_oca module.
 
-Handles migration from:
-- V14: ``sale_commission`` was the only module. The heavy migration
-  (model renames, field renames) is handled by commission_oca's
-  pre_init_hook. This hook handles any remaining cleanup.
-- V16-V18: ``sale_commission`` (OCA) needs renaming to ``sale_commission_oca``
-  to avoid conflicts with the Odoo 19 Enterprise ``sale_commission`` module.
+Handles the V16-V18 module rename: sale_commission → sale_commission_oca.
 
-IMPORTANT: Odoo 19 Enterprise introduces an official ``sale_commission``
-module with different models (sale.commission.plan, sale.commission.achievement).
-The OCA module must use the ``sale_commission_oca`` name to avoid conflicts.
-This hook ensures the OCA module data is properly migrated and the old
-module entry is cleaned up so it doesn't interfere with the Enterprise module.
+For V14 → V19 migrations:
+  - commission_oca's pre_init_hook handles ALL table/model/field renames.
+  - This hook only handles residual XML ID moves from the old module name.
+
+For Enterprise coexistence (Odoo.sh):
+  - If Enterprise's sale_commission is installed, its state is 'installed'
+    (not 'to upgrade' like the bridge). We detect Enterprise by checking
+    for the sale_commission_plan table. When Enterprise is active, we skip
+    module cleanup to avoid breaking Enterprise data.
 """
 
 import logging
@@ -25,102 +24,125 @@ _logger = logging.getLogger(__name__)
 
 def pre_init_hook(env):
     """Prepare the database for sale_commission_oca installation."""
+    print("\n>>> sale_commission_oca pre_init_hook: STARTED")
+    _logger.info("sale_commission_oca: pre_init_hook starting")
+
     cr = env.cr
-    _handle_intermediate_migration(cr)
-    _handle_enterprise_conflict(cr)
 
+    # Detect Enterprise sale_commission (different models)
+    enterprise_active = _table_exists(cr, "sale_commission_plan")
 
-def _module_installed(cr, module):
+    # Check state of sale_commission module
     cr.execute(
-        "SELECT 1 FROM ir_module_module "
-        "WHERE name = %s AND state IN ('installed', 'to upgrade')",
-        (module,),
+        "SELECT state FROM ir_module_module WHERE name = 'sale_commission'"
+    )
+    row = cr.fetchone()
+
+    if not row:
+        _logger.info("No sale_commission module found. Fresh installation.")
+        print(">>> sale_commission_oca: Fresh installation - nothing to migrate.")
+        print(">>> sale_commission_oca pre_init_hook: FINISHED\n")
+        return
+
+    state = row[0]
+    _logger.info(
+        "sale_commission module state=%s, enterprise=%s", state, enterprise_active
+    )
+    print(
+        ">>> sale_commission_oca: sale_commission state=%s, enterprise=%s"
+        % (state, enterprise_active)
+    )
+
+    if enterprise_active:
+        # Enterprise's sale_commission is active. Don't touch its records.
+        # commission_oca's hook already migrated V14 data Enterprise-safely.
+        _logger.info(
+            "Enterprise sale_commission detected. "
+            "Skipping module cleanup to preserve Enterprise data."
+        )
+        print(">>> Enterprise detected - skipping sale_commission cleanup.")
+    elif state == 'to upgrade':
+        # Bridge module is active (V14 migration path).
+        # commission_oca's hook already handled table/model renames.
+        # Just move any residual data XML IDs that belong to sale-specific
+        # functionality (sale.order.line.agent, etc.).
+        _logger.info(
+            "sale_commission is in 'to upgrade' (bridge active). "
+            "Moving residual sale-specific XML IDs."
+        )
+        _move_sale_xmlids(cr)
+    elif state == 'installed':
+        # V16-V18 direct migration: rename OCA sale_commission module.
+        _logger.info("Renaming V16-V18 sale_commission -> sale_commission_oca")
+        print(">>> Renaming V16-V18 sale_commission -> sale_commission_oca")
+        _rename_v16_sale_commission(cr)
+    else:
+        _logger.info(
+            "sale_commission state=%s - no action needed", state
+        )
+
+    print(">>> sale_commission_oca pre_init_hook: FINISHED\n")
+    _logger.info("sale_commission_oca: pre_init_hook finished")
+
+
+def _table_exists(cr, table):
+    cr.execute(
+        "SELECT 1 FROM information_schema.tables "
+        "WHERE table_name = %s AND table_schema = 'public'",
+        (table,),
     )
     return bool(cr.fetchone())
 
 
-def _handle_intermediate_migration(cr):
-    """Handle migration from V16-V18 where OCA 'sale_commission' exists."""
-    if not _module_installed(cr, "sale_commission"):
-        return
-
-    _logger.info("=" * 70)
-    _logger.info(
-        "MIGRATION: Detected installed 'sale_commission' module"
+def _move_sale_xmlids(cr):
+    """Move sale-specific XML IDs from sale_commission to sale_commission_oca."""
+    # Only move non-technical records that are sale-specific.
+    # Technical records (ir.model, ir.model.fields) were already handled
+    # by commission_oca's hook.
+    cr.execute(
+        """
+        UPDATE ir_model_data SET module = 'sale_commission_oca'
+        WHERE module = 'sale_commission'
+          AND model NOT IN (
+            'ir.model', 'ir.model.fields', 'ir.model.fields.selection',
+            'ir.model.access', 'ir.model.constraint', 'ir.rule',
+            'ir.ui.view', 'ir.ui.menu',
+            'ir.actions.act_window', 'ir.actions.report',
+            'ir.module.category', 'ir.model.relation'
+          )
+        """
     )
-    _logger.info("Renaming to sale_commission_oca")
-    _logger.info("=" * 70)
+    if cr.rowcount:
+        _logger.info(
+            "Moved %d residual XML IDs to sale_commission_oca", cr.rowcount
+        )
 
-    # Move XML IDs from 'sale_commission' to 'sale_commission_oca'
+
+def _rename_v16_sale_commission(cr):
+    """Full rename of V16-V18 OCA sale_commission → sale_commission_oca."""
     cr.execute(
         "UPDATE ir_model_data SET module = 'sale_commission_oca' "
         "WHERE module = 'sale_commission'"
     )
-    _logger.info(
-        "Moved %d XML IDs from sale_commission to sale_commission_oca",
-        cr.rowcount,
-    )
+    _logger.info("Moved %d XML IDs", cr.rowcount)
 
-    # Update module dependencies
     cr.execute(
         "UPDATE ir_module_module_dependency SET name = 'sale_commission_oca' "
         "WHERE name = 'sale_commission'"
     )
 
-    # Clean up old module entry
+    # Mark old module as uninstalled
     cr.execute(
-        "SELECT id FROM ir_module_module WHERE name = 'sale_commission'",
+        "SELECT id FROM ir_module_module WHERE name = 'sale_commission'"
     )
-    row = cr.fetchone()
-    if row:
-        module_id = row[0]
+    mod_row = cr.fetchone()
+    if mod_row:
         cr.execute(
             "DELETE FROM ir_module_module_dependency WHERE module_id = %s",
-            (module_id,),
+            (mod_row[0],),
         )
         cr.execute(
             "UPDATE ir_module_module SET state = 'uninstalled' WHERE id = %s",
-            (module_id,),
+            (mod_row[0],),
         )
-        _logger.info("Marked 'sale_commission' as uninstalled")
-
-    _logger.info("Migration completed for sale_commission_oca")
-
-
-def _handle_enterprise_conflict(cr):
-    """Ensure no conflicts with Odoo 19 Enterprise sale_commission module.
-
-    The Enterprise module uses different models (sale.commission.plan,
-    sale.commission.achievement) so there should be no data conflicts.
-    We just need to ensure our renamed module doesn't interfere.
-    """
-    # Check if Enterprise sale_commission exists alongside our OCA one
-    cr.execute(
-        "SELECT COUNT(*) FROM ir_module_module WHERE name = 'sale_commission'"
-    )
-    count = cr.fetchone()[0]
-    if count > 1:
-        _logger.warning(
-            "Multiple 'sale_commission' entries found in ir_module_module. "
-            "This may indicate a conflict between OCA and Enterprise modules."
-        )
-    elif count == 1:
-        # There's one sale_commission entry. If it was already handled by
-        # commission_oca's hook (V14 case) or the intermediate migration
-        # above, it should be 'uninstalled'. If it's the Enterprise module
-        # being installed, leave it alone.
-        cr.execute(
-            "SELECT state, latest_version FROM ir_module_module "
-            "WHERE name = 'sale_commission'"
-        )
-        row = cr.fetchone()
-        if row and row[0] in ("installed", "to upgrade"):
-            state, ver = row
-            _logger.info(
-                "sale_commission module found (state=%s, version=%s). "
-                "If this is the Enterprise module, no action needed. "
-                "If this is residual OCA data, it should have been handled "
-                "by commission_oca's pre_init_hook.",
-                state,
-                ver,
-            )
+        _logger.info("Marked sale_commission as uninstalled")
