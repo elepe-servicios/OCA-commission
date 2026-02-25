@@ -175,12 +175,14 @@ def _update_model_references(cr, old_model, new_model):
     """Update all references to a model name in metadata tables."""
     _logger.info("Updating model references: %s -> %s", old_model, new_model)
 
+    # NOTE: ir_model_constraint.model is an INTEGER FK to ir_model.id in
+    # Odoo 19 (not a text column). It does NOT need updating here because
+    # renaming ir_model.model already fixes the referenced record.
     for table, column in [
         ("ir_model", "model"),
         ("ir_model_fields", "model"),
         ("ir_model_fields", "relation"),
         ("ir_model_data", "model"),
-        ("ir_model_constraint", "model"),
         ("ir_attachment", "res_model"),
     ]:
         if _table_exists(cr, table):
@@ -396,13 +398,17 @@ def _cleanup_v14_xmlids(cr, enterprise_active=False):
     _logger.info("Removed %d V14 ir.model.fields.selection XML IDs", count_sel)
 
     # --- Delete auto-generated ir.model.constraint records ---
+    # NOTE: ir_model_constraint.model is an INTEGER FK to ir_model.id in
+    # Odoo 19, so we join through ir_model to filter by model name.
     cr.execute(
         """
         DELETE FROM ir_model_data
         WHERE module = 'sale_commission'
           AND model = 'ir.model.constraint'
           AND res_id IN (
-            SELECT id FROM ir_model_constraint WHERE model IN %s
+            SELECT c.id FROM ir_model_constraint c
+            JOIN ir_model m ON c.model = m.id
+            WHERE m.model IN %s
           )
         """,
         (tuple(V14_RENAMED_MODELS),),
