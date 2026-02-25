@@ -3,7 +3,7 @@
 # Copyright 2014-2022 Tecnativa - Pedro M. Baeza
 {
     "name": "Sales commissions OCA",
-    "version": "19.0.1.0.1",
+    "version": "19.0.1.6.0",
     "author": "Tecnativa, Odoo Community Association (OCA)",
     "category": "Sales Management",
     "license": "AGPL-3",
@@ -17,5 +17,6 @@
         "security/ir.model.access.csv",
         "views/sale_order_view.xml",
     ],
+    "pre_init_hook": "pre_init_hook",
     "installable": True,
 }

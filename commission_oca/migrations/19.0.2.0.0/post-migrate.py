@@ -1,63 +1,54 @@
 # Copyright 2025 Odoo Community Association (OCA)
 # License AGPL-3.0 or later (https://www.gnu.org/licenses/agpl).
 
-import logging
+"""
+Post-migration script for commission_oca 19.0.2.0.0.
 
-from odoo.upgrade import util
+Runs after the module code is loaded. Handles cleanup of old module
+references that might remain after the pre-migrate field rename.
+"""
+
+import logging
 
 _logger = logging.getLogger(__name__)
 
 
 def migrate(cr, version):
-    """Post-migration tasks after renaming from 'commission' to 'commission_oca'.
-
-    This script performs cleanup and verification tasks after the module rename:
-    - Removes old 'commission' module entry if it still exists
-    - Cleans up duplicate XML IDs
-    - Verifies all XML IDs have been properly renamed
-    - Updates any remaining references in custom fields or data
-    - Ensures module category references are correct
-    """
-    _logger.info("Starting post-migration tasks for commission_oca")
-
-    # CRITICAL: Ensure old 'commission' module is completely removed
-    cr.execute(
-        """
-        SELECT id, name, state 
-        FROM ir_module_module 
-        WHERE name = 'commission'
-        """
+    """Post-migration cleanup for commission_oca."""
+    _logger.info(
+        "commission_oca post-migrate 19.0.2.0.0 (installed version: %s)",
+        version,
     )
-    old_modules = cr.fetchall()
-    if old_modules:
-        _logger.warning(
-            f"Found {len(old_modules)} entries for old 'commission' module. "
-            "This should not happen after rename. Cleaning up..."
-        )
-        for module_id, name, state in old_modules:
-            _logger.info(f"Removing 'commission' module (ID: {module_id}, state: {state})")
-            
-            # First remove dependencies pointing to this module
-            cr.execute(
-                "DELETE FROM ir_module_module_dependency WHERE module_id = %s",
-                (module_id,)
-            )
-            
-            # Then remove the module itself
-            cr.execute(
-                "DELETE FROM ir_module_module WHERE id = %s",
-                (module_id,)
-            )
-        
-        _logger.info("Old 'commission' module entries removed")
-    
-    # Clean up any XML IDs still referencing 'commission' module
+
+    # Clean up any residual 'commission' module entries
     cr.execute(
-        """
-        SELECT COUNT(*) 
-        FROM ir_model_data 
-        WHERE module = 'commission'
-        """
+        "SELECT id FROM ir_module_module "
+        "WHERE name = 'commission' AND state != 'uninstalled'"
+    )
+    old = cr.fetchone()
+    if old:
+        _logger.info("Cleaning up residual 'commission' module entry (id=%s)", old[0])
+        cr.execute(
+            "DELETE FROM ir_module_module_dependency WHERE module_id = %s",
+            (old[0],),
+        )
+        cr.execute(
+            "UPDATE ir_module_module SET state = 'uninstalled' WHERE id = %s",
+            (old[0],),
+        )
+
+    # Move any orphaned XML IDs from 'commission' to 'commission_oca'
+    cr.execute(
+        "UPDATE ir_model_data SET module = 'commission_oca' "
+        "WHERE module = 'commission'"
+    )
+    if cr.rowcount:
+        _logger.info(
+            "Moved %d orphaned XML IDs from 'commission' to 'commission_oca'",
+            cr.rowcount,
+        )
+
+    _logger.info("Post-migration completed for commission_oca")
     )
     old_xmlid_count = cr.fetchone()[0]
     

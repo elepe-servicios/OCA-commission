@@ -24,5 +24,6 @@
         "wizards/commission_make_settle_views.xml",
     ],
     "demo": ["demo/commission_and_agent_demo.xml"],
+    "pre_init_hook": "pre_init_hook",
     "installable": True,
 }

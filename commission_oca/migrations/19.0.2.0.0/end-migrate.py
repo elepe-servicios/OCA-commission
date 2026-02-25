@@ -1,33 +1,57 @@
 # Copyright 2025 Odoo Community Association (OCA)
 # License AGPL-3.0 or later (https://www.gnu.org/licenses/agpl).
 
+"""
+End-migration script for commission_oca 19.0.2.0.0.
+
+Runs after ALL modules have been loaded and updated.
+Final verification and cleanup of migration artifacts.
+"""
+
 import logging
 
 _logger = logging.getLogger(__name__)
 
 
 def migrate(cr, version):
-    """Final cleanup script to ensure complete migration.
+    """Final cleanup after all modules are loaded."""
+    _logger.info(
+        "commission_oca end-migrate 19.0.2.0.0 (installed version: %s)",
+        version,
+    )
 
-    This end-migration script runs after all modules have been loaded.
-    It performs a final cleanup to ensure:
-    - No residual 'commission' module exists
-    - No duplicate XML IDs remain
-    - All references point to 'commission_oca'
-    
-    This is particularly useful if the pre/post scripts didn't complete
-    the cleanup properly on first run.
-    """
-    _logger.info("=" * 70)
-    _logger.info("FINAL CLEANUP: Ensuring complete migration to commission_oca")
-    _logger.info("=" * 70)
+    # Final cleanup of any remaining old module references
+    for old_module in ("commission", "sale_commission"):
+        cr.execute(
+            "SELECT COUNT(*) FROM ir_model_data WHERE module = %s",
+            (old_module,),
+        )
+        count = cr.fetchone()[0]
+        if count:
+            _logger.warning(
+                "Found %d orphaned XML IDs still referencing '%s' - cleaning up",
+                count,
+                old_module,
+            )
+            # Move data XML IDs to the appropriate new module
+            target = (
+                "commission_oca"
+                if old_module == "commission"
+                else "sale_commission_oca"
+            )
+            cr.execute(
+                "UPDATE ir_model_data SET module = %s WHERE module = %s",
+                (target, old_module),
+            )
 
-    # 1. Check and remove old 'commission' module
-    cr.execute(
-        """
-        SELECT id, name, state, latest_version
-        FROM ir_module_module
-        WHERE name = 'commission'
+        # Fix any remaining dependency references
+        cr.execute(
+            "UPDATE ir_module_module_dependency SET name = %s "
+            "WHERE name = %s",
+            (target if old_module != "sale_commission" else "sale_commission_oca", old_module),
+        )
+
+    _logger.info("End-migration cleanup completed for commission_oca")
         """
     )
     old_modules = cr.fetchall()
